@@ -2,5 +2,191 @@
 title: "Analyzing US Births"
 author: Gabriella Buccellato
 format: html
+execute:
+  echo: false
 ---
 
+```{r}
+#| message: false
+library(tidyverse)
+library(readxl)
+births <- read_excel("data/us_births_1994_2014.xlsx")
+
+glimpse(births)
+```
+
+
+```{r}
+#| cache: true
+births_tibble <- read_excel("data/us_births_1994_2014.xlsx") |>
+  mutate(
+    day_of_week = factor(
+      day_of_week,
+      levels = c("Sun", "Mon", "Tues", "Wed", "Thurs", "Fri", "Sat"),
+      ordered = TRUE
+    )
+  )
+```
+
+```{r}
+#| message: false
+
+average_births <- births_tibble |>
+  group_by(month, date_of_month) |>
+  summarize(
+    average_births = mean(births, na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+```{r}
+#| message: false
+
+ggplot(average_births, aes(
+  x = date_of_month,
+  y = factor(month, levels = 12:1),
+  fill = average_births
+)) +
+  geom_tile(color = "white") +
+  scale_y_discrete(
+    breaks = as.character(12:1),
+    labels = month.name[12:1],
+    name = "Month"
+  ) +
+  scale_x_continuous(
+    breaks = 1:31,
+    name = "Day of Month"
+  ) +
+  scale_fill_viridis_c(name = "Mean Births") +
+  labs(title = "Average Daily Births (1994–2014)") +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(size = 8)
+  )
+```
+
+```{r}
+#| message: false
+
+christmas_births <- births_tibble |>
+  group_by(year) |>
+  summarize(
+    christmas_births = sum(
+      births[month == 12 & date_of_month == 25],
+      na.rm = TRUE
+    ),
+    baseline_births = mean(
+      births[
+        month == 12 &
+        date_of_month %in% c(20:24, 27:30)
+      ],
+      na.rm = TRUE
+    ),
+    christmas_pct_of_baseline =
+      100 * christmas_births / baseline_births,
+    .groups = "drop"
+  )
+
+christmas_births
+```
+
+```{r}
+#| message: false
+
+christmas_births <- christmas_births |>
+  mutate(
+    weekday = wday(
+      make_date(year, 12, 25),
+      label = TRUE,
+      abbr = FALSE
+    )
+  )
+
+ggplot(
+  christmas_births,
+  aes(x = year, y = christmas_pct_of_baseline)
+) +
+  geom_line() +
+  geom_point(aes(color = weekday), size = 2) +
+  labs(
+    title = "Christmas Births Compared with Surrounding Days",
+    x = "Year",
+    y = "Christmas Births (% of Baseline)",
+    color = "Weekday on Christmas"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+#| message: false
+
+births_model <- lm(
+  births ~ year + month + day_of_week,
+  data = births_tibble
+)
+
+summary(births_model)$r.squared
+```
+
+```{r}
+#| message: false
+
+births_adjusted <- births_tibble |>
+  mutate(
+    pct_resid = 100 * resid(births_model) / mean(births)
+  )
+
+calendar_resid <- births_adjusted |>
+  filter(!(month == 2 & date_of_month == 29)) |>
+  group_by(month, date_of_month) |>
+  summarize(
+    pct_resid = mean(pct_resid, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(
+    date = make_date(2001, month, date_of_month)
+  ) |>
+  arrange(date)
+
+calendar_resid
+```
+
+```{r}
+#| message: false
+
+calendar_resid_plot <- calendar_resid |>
+  rename(
+    calendar_date = date,
+    mean_pct_resid = pct_resid
+  )
+
+holiday_labels <- tibble(
+  calendar_date = make_date(2001, c(1, 11, 12), c(1, 22, 25)),
+  holiday = c("New Year's Day", "Thanksgiving", "Christmas")
+) |>
+  left_join(
+    calendar_resid_plot,
+    by = "calendar_date"
+  )
+
+ggplot(calendar_resid_plot,
+       aes(x = calendar_date, y = mean_pct_resid)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  geom_line(color = "steelblue", linewidth = 0.8) +
+  geom_point(data = holiday_labels,
+             aes(x = calendar_date, y = mean_pct_resid),
+             color = "firebrick", size = 2,
+             inherit.aes = FALSE) +
+  geom_text(data = holiday_labels,
+            aes(x = calendar_date, y = mean_pct_resid, label = holiday),
+            color = "firebrick", angle = 45, hjust = 0,
+            vjust = 1, size = 3,
+            inherit.aes = FALSE) +
+  labs(
+    title = "Daily Birth Residuals Across the Calendar",
+    x = "Calendar date",
+    y = "Mean residual (% of average daily births)"
+  ) +
+  theme_minimal()
+```
